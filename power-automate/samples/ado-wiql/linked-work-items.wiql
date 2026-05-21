@@ -1,0 +1,34 @@
+-- WIQL: Work Items with Planner Task ID
+-- Use this query to find all ADO work items that have a linked Planner task.
+-- Useful for auditing the integration and verifying link integrity.
+--
+-- Option A: If using Description-based linking
+-- (searches for the PLANNER_TASK_ID marker in the description)
+
+SELECT
+    [System.Id],
+    [System.Title],
+    [System.State],
+    [System.Description],
+    [System.ChangedDate]
+FROM WorkItems
+WHERE
+    [System.TeamProject] = @project
+    AND [System.WorkItemType] = 'Task'
+    AND [System.Description] CONTAINS 'PLANNER_TASK_ID:'
+ORDER BY [System.ChangedDate] DESC
+
+
+-- Option B: If using a custom field (uncomment and adjust field name)
+-- SELECT
+--     [System.Id],
+--     [System.Title],
+--     [System.State],
+--     [Custom.PlannerTaskId],
+--     [System.ChangedDate]
+-- FROM WorkItems
+-- WHERE
+--     [System.TeamProject] = @project
+--     AND [System.WorkItemType] = 'Task'
+--     AND [Custom.PlannerTaskId] <> ''
+-- ORDER BY [System.ChangedDate] DESC

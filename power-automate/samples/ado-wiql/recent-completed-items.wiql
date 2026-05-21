@@ -1,0 +1,21 @@
+-- WIQL: Recently Completed Work Items
+-- Use this query to find ADO work items that were recently moved to Done/Closed.
+-- Useful for testing Flow B or debugging sync issues.
+--
+-- Replace @project with your project name if running outside of a project context.
+-- Adjust the date range as needed.
+
+SELECT
+    [System.Id],
+    [System.Title],
+    [System.State],
+    [System.ChangedDate],
+    [System.AssignedTo],
+    [System.Description]
+FROM WorkItems
+WHERE
+    [System.TeamProject] = @project
+    AND [System.WorkItemType] = 'Task'
+    AND [System.State] = 'Done'
+    AND [System.ChangedDate] >= @today - 7
+ORDER BY [System.ChangedDate] DESC

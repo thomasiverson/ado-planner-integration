@@ -1,0 +1,19 @@
+-- WIQL: Work Items Changed Since Timestamp (for Poller)
+-- This is the query used by Flow B (Option 2 - Scheduled Poller).
+-- Replace the timestamp with your watermark value.
+--
+-- In Power Automate, the timestamp would be dynamically injected:
+--   @{variables('varLastRunTime')}
+
+SELECT
+    [System.Id],
+    [System.State],
+    [System.Description],
+    [System.ChangedDate]
+FROM WorkItems
+WHERE
+    [System.TeamProject] = @project
+    AND [System.WorkItemType] = 'Task'
+    AND [System.State] = 'Done'
+    AND [System.ChangedDate] >= '2025-01-01T00:00:00Z'
+ORDER BY [System.ChangedDate] DESC

@@ -1,0 +1,17 @@
+# Solution exports
+power-automate/solution/*.zip
+
+# Environment / secrets
+.env
+*.env
+
+# Logs
+*.log
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Editor
+.vscode/
+*.swp

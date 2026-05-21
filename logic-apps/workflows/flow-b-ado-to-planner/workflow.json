@@ -1,0 +1,151 @@
+{
+  "definition": {
+    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+    "contentVersion": "1.0.0.0",
+    "triggers": {
+      "When_a_HTTP_request_is_received": {
+        "type": "Request",
+        "kind": "Http",
+        "inputs": {
+          "schema": {
+            "type": "object",
+            "properties": {
+              "resource": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "integer" },
+                  "fields": { "type": "object" },
+                  "_links": { "type": "object" }
+                }
+              },
+              "eventType": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "actions": {
+      "Condition_-_State_is_closed": {
+        "type": "If",
+        "expression": {
+          "or": [
+            { "equals": [ "@triggerBody()?['resource']?['fields']?['System.State']", "Done" ] },
+            { "equals": [ "@triggerBody()?['resource']?['fields']?['System.State']", "Closed" ] },
+            { "equals": [ "@triggerBody()?['resource']?['fields']?['System.State']", "Completed" ] },
+            { "equals": [ "@triggerBody()?['resource']?['fields']?['System.State']", "Resolved" ] }
+          ]
+        },
+        "runAfter": {},
+        "actions": {
+          "Get_work_item": {
+            "type": "Http",
+            "inputs": {
+              "method": "GET",
+              "uri": "https://dev.azure.com/@{appsetting('ADO_ORG')}/@{appsetting('ADO_PROJECT')}/_apis/wit/workitems/@{triggerBody()?['resource']?['id']}",
+              "queries": {
+                "api-version": "7.1",
+                "$expand": "all"
+              },
+              "authentication": {
+                "type": "ManagedServiceIdentity",
+                "identity": "@appsetting('MANAGED_IDENTITY_CLIENT_ID')",
+                "audience": "499b84ac-1321-427f-aa17-267ca6975798"
+              }
+            }
+          },
+          "Compose_-_Extract_planner_id": {
+            "type": "Compose",
+            "runAfter": {
+              "Get_work_item": [ "Succeeded" ]
+            },
+            "inputs": "@trim(first(split(last(split(coalesce(body('Get_work_item')?['fields']?['System.Description'], ''), 'PLANNER_TASK_ID:')), ' ')))"
+          },
+          "Condition_-_Marker_present": {
+            "type": "If",
+            "expression": {
+              "and": [
+                { "not": { "equals": [ "@outputs('Compose_-_Extract_planner_id')", "" ] } },
+                { "not": { "contains": [ "@outputs('Compose_-_Extract_planner_id')", "<" ] } }
+              ]
+            },
+            "runAfter": {
+              "Compose_-_Extract_planner_id": [ "Succeeded" ]
+            },
+            "actions": {
+              "Get_planner_task": {
+                "type": "Http",
+                "inputs": {
+                  "method": "GET",
+                  "uri": "https://graph.microsoft.com/v1.0/planner/tasks/@{outputs('Compose_-_Extract_planner_id')}",
+                  "authentication": {
+                    "type": "ManagedServiceIdentity",
+                    "identity": "@appsetting('MANAGED_IDENTITY_CLIENT_ID')",
+                    "audience": "https://graph.microsoft.com"
+                  }
+                }
+              },
+              "Complete_planner_task": {
+                "type": "Http",
+                "runAfter": {
+                  "Get_planner_task": [ "Succeeded" ]
+                },
+                "inputs": {
+                  "method": "PATCH",
+                  "uri": "https://graph.microsoft.com/v1.0/planner/tasks/@{outputs('Compose_-_Extract_planner_id')}",
+                  "headers": {
+                    "If-Match": "@{body('Get_planner_task')?['@odata.etag']}",
+                    "Content-Type": "application/json"
+                  },
+                  "body": {
+                    "percentComplete": 100
+                  },
+                  "authentication": {
+                    "type": "ManagedServiceIdentity",
+                    "identity": "@appsetting('MANAGED_IDENTITY_CLIENT_ID')",
+                    "audience": "https://graph.microsoft.com"
+                  }
+                }
+              }
+            },
+            "else": {
+              "actions": {
+                "Terminate_-_No_marker": {
+                  "type": "Terminate",
+                  "inputs": {
+                    "runStatus": "Succeeded"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "else": {
+          "actions": {
+            "Terminate_-_Not_closed": {
+              "type": "Terminate",
+              "inputs": {
+                "runStatus": "Succeeded"
+              }
+            }
+          }
+        }
+      },
+      "Response": {
+        "type": "Response",
+        "kind": "Http",
+        "runAfter": {
+          "Condition_-_State_is_closed": [ "Succeeded", "Failed", "Skipped", "TimedOut" ]
+        },
+        "inputs": {
+          "statusCode": 200,
+          "body": {
+            "status": "accepted"
+          }
+        }
+      }
+    },
+    "outputs": {},
+    "contentVersion": "1.0.0.0"
+  },
+  "kind": "Stateful"
+}
