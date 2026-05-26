@@ -9,8 +9,11 @@ param location string
 @description('Tags.')
 param tags object = {}
 
-@description('Principal ID of the user-assigned managed identity to grant data-plane access to.')
-param managedIdentityPrincipalId string
+@description('Subnet ID to host the private endpoints (snet-pe).')
+param privateEndpointSubnetId string
+
+@description('Private DNS zone IDs for storage subresources.')
+param dnsZoneIds object // { blob, queue, table, file }
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: name
@@ -21,51 +24,56 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   properties: {
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
-    allowSharedKeyAccess: true // required for Logic Apps Standard runtime; remove only with key-vault-referenced connection strings
+    allowSharedKeyAccess: false
     supportsHttpsTrafficOnly: true
+    publicNetworkAccess: 'Disabled'
     networkAcls: {
-      defaultAction: 'Allow'
+      defaultAction: 'Deny'
       bypass: 'AzureServices'
     }
   }
 }
 
-// Built-in role definitions
-var blobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
-var queueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
-var tableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
+var subresources = [
+  { groupId: 'blob',  zoneId: dnsZoneIds.blob  }
+  { groupId: 'queue', zoneId: dnsZoneIds.queue }
+  { groupId: 'table', zoneId: dnsZoneIds.table }
+  { groupId: 'file',  zoneId: dnsZoneIds.file  }
+]
 
-resource blobOwner 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, managedIdentityPrincipalId, blobDataOwnerRoleId)
-  scope: storage
+resource pe 'Microsoft.Network/privateEndpoints@2024-05-01' = [for sub in subresources: {
+  name: 'pe-${name}-${sub.groupId}'
+  location: location
+  tags: tags
   properties: {
-    principalId: managedIdentityPrincipalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', blobDataOwnerRoleId)
+    subnet: { id: privateEndpointSubnetId }
+    privateLinkServiceConnections: [
+      {
+        name: 'plsc-${sub.groupId}'
+        properties: {
+          privateLinkServiceId: storage.id
+          groupIds: [ sub.groupId ]
+        }
+      }
+    ]
   }
-}
+}]
 
-resource queueContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, managedIdentityPrincipalId, queueDataContributorRoleId)
-  scope: storage
+resource zoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = [for (sub, i) in subresources: {
+  parent: pe[i]
+  name: 'default'
   properties: {
-    principalId: managedIdentityPrincipalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', queueDataContributorRoleId)
+    privateDnsZoneConfigs: [
+      {
+        name: sub.groupId
+        properties: { privateDnsZoneId: sub.zoneId }
+      }
+    ]
   }
-}
-
-resource tableContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storage.id, managedIdentityPrincipalId, tableDataContributorRoleId)
-  scope: storage
-  properties: {
-    principalId: managedIdentityPrincipalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', tableDataContributorRoleId)
-  }
-}
+}]
 
 output name string = storage.name
 output resourceId string = storage.id
-@secure()
-output primaryKey string = storage.listKeys().keys[0].value
+output blobEndpoint string = storage.properties.primaryEndpoints.blob
+output queueEndpoint string = storage.properties.primaryEndpoints.queue
+output tableEndpoint string = storage.properties.primaryEndpoints.table

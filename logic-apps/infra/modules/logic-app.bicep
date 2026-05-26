@@ -10,18 +10,17 @@ param location string
 @description('Tags.')
 param tags object = {}
 
-@description('Storage account name for runtime backing.')
+@description('Storage account name (used for keyless AzureWebJobsStorage settings).')
 param storageAccountName string
 
-@description('Storage account primary key (used by Logic Apps runtime). Stored only in app settings.')
-@secure()
-param storageAccountKey string
-
-@description('Resource ID of the user-assigned managed identity.')
-param managedIdentityResourceId string
+@description('Resource ID of the user-assigned managed identity (for Graph + ADO calls).')
+param userAssignedIdentityResourceId string
 
 @description('Client ID of the user-assigned managed identity (referenced by workflow HTTP actions).')
-param managedIdentityClientId string
+param userAssignedIdentityClientId string
+
+@description('Subnet ID for VNet integration (snet-app, delegated to Microsoft.App/environments).')
+param vnetIntegrationSubnetId string
 
 @description('App Insights connection string. Empty string disables telemetry.')
 param appInsightsConnectionString string = ''
@@ -46,18 +45,29 @@ resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
   }
 }
 
+// Keyless AzureWebJobsStorage: uses the site's SYSTEM-assigned managed identity.
+// Storage role assignments (Blob Data Owner / Queue Data Contributor / Table Data Contributor)
+// are granted out-of-band by the storage-role-assignments module against site.identity.principalId.
 var coreAppSettings = [
   {
-    name: 'AzureWebJobsStorage'
-    value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};AccountKey=${storageAccountKey};EndpointSuffix=${environment().suffixes.storage}'
+    name: 'AzureWebJobsStorage__accountName'
+    value: storageAccountName
   }
   {
-    name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING'
-    value: 'DefaultEndpointsProtocol=https;AccountName=${storageAccountName};AccountKey=${storageAccountKey};EndpointSuffix=${environment().suffixes.storage}'
+    name: 'AzureWebJobsStorage__credential'
+    value: 'managedidentity'
   }
   {
-    name: 'WEBSITE_CONTENTSHARE'
-    value: toLower(logicAppName)
+    name: 'AzureWebJobsStorage__blobServiceUri'
+    value: 'https://${storageAccountName}.blob.${environment().suffixes.storage}'
+  }
+  {
+    name: 'AzureWebJobsStorage__queueServiceUri'
+    value: 'https://${storageAccountName}.queue.${environment().suffixes.storage}'
+  }
+  {
+    name: 'AzureWebJobsStorage__tableServiceUri'
+    value: 'https://${storageAccountName}.table.${environment().suffixes.storage}'
   }
   {
     name: 'FUNCTIONS_EXTENSION_VERSION'
@@ -88,8 +98,16 @@ var coreAppSettings = [
     value: '1'
   }
   {
+    name: 'WEBSITE_CONTENTOVERVNET'
+    value: '1'
+  }
+  {
+    name: 'WEBSITE_VNET_ROUTE_ALL'
+    value: '1'
+  }
+  {
     name: 'MANAGED_IDENTITY_CLIENT_ID'
-    value: managedIdentityClientId
+    value: userAssignedIdentityClientId
   }
 ]
 
@@ -111,16 +129,19 @@ resource site 'Microsoft.Web/sites@2023-12-01' = {
   tags: tags
   kind: 'functionapp,workflowapp'
   identity: {
-    type: 'UserAssigned'
+    type: 'SystemAssigned, UserAssigned'
     userAssignedIdentities: {
-      '${managedIdentityResourceId}': {}
+      '${userAssignedIdentityResourceId}': {}
     }
   }
   properties: {
     serverFarmId: plan.id
     httpsOnly: true
     clientAffinityEnabled: false
-    keyVaultReferenceIdentity: managedIdentityResourceId
+    keyVaultReferenceIdentity: userAssignedIdentityResourceId
+    virtualNetworkSubnetId: vnetIntegrationSubnetId
+    vnetRouteAllEnabled: true
+    vnetContentShareEnabled: true
     siteConfig: {
       minTlsVersion: '1.2'
       ftpsState: 'Disabled'
@@ -135,3 +156,4 @@ resource site 'Microsoft.Web/sites@2023-12-01' = {
 output name string = site.name
 output resourceId string = site.id
 output defaultHostName string = site.properties.defaultHostName
+output systemAssignedPrincipalId string = site.identity.principalId

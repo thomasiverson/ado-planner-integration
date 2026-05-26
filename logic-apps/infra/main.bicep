@@ -26,6 +26,15 @@ param plannerPlanId string
 @description('Provision Application Insights for workflow telemetry.')
 param enableAppInsights bool = true
 
+@description('VNet address space. Avoid collisions with other workloads in the subscription.')
+param vnetAddressPrefix string = '10.41.0.0/22'
+
+@description('Subnet for Logic App VNet integration.')
+param snetAppPrefix string = '10.41.0.0/24'
+
+@description('Subnet for private endpoints.')
+param snetPePrefix string = '10.41.1.0/24'
+
 @description('Tags applied to all resources.')
 param tags object = {
   workload: 'planner-ado-integration'
@@ -39,6 +48,25 @@ var logicAppName = 'la-${namePrefix}-${suffix}'
 var identityName = 'uami-${namePrefix}-${suffix}'
 var appInsightsName = 'appi-${namePrefix}-${suffix}'
 var logAnalyticsName = 'log-${namePrefix}-${suffix}'
+var vnetName = 'vnet-${namePrefix}-${suffix}'
+
+module vnet 'modules/vnet.bicep' = {
+  params: {
+    name: vnetName
+    location: location
+    tags: tags
+    addressPrefix: vnetAddressPrefix
+    snetAppPrefix: snetAppPrefix
+    snetPePrefix: snetPePrefix
+  }
+}
+
+module dns 'modules/private-dns.bicep' = {
+  params: {
+    vnetId: vnet.outputs.id
+    tags: tags
+  }
+}
 
 module identity 'modules/identity.bicep' = {
   params: {
@@ -53,7 +81,13 @@ module storage 'modules/storage.bicep' = {
     name: storageAccountName
     location: location
     tags: tags
-    managedIdentityPrincipalId: identity.outputs.principalId
+    privateEndpointSubnetId: vnet.outputs.snetPeId
+    dnsZoneIds: {
+      blob: dns.outputs.blobZoneId
+      queue: dns.outputs.queueZoneId
+      table: dns.outputs.tableZoneId
+      file: dns.outputs.fileZoneId
+    }
   }
 }
 
@@ -85,9 +119,9 @@ module logicApp 'modules/logic-app.bicep' = {
     location: location
     tags: tags
     storageAccountName: storage.outputs.name
-    storageAccountKey: storage.outputs.primaryKey
-    managedIdentityResourceId: identity.outputs.resourceId
-    managedIdentityClientId: identity.outputs.clientId
+    userAssignedIdentityResourceId: identity.outputs.resourceId
+    userAssignedIdentityClientId: identity.outputs.clientId
+    vnetIntegrationSubnetId: vnet.outputs.snetAppId
     appInsightsConnectionString: enableAppInsights ? (appInsights.?properties.?ConnectionString ?? '') : ''
     appSettings: {
       ADO_ORG: adoOrg
@@ -99,11 +133,23 @@ module logicApp 'modules/logic-app.bicep' = {
   }
 }
 
+module storageRoles 'modules/storage-role-assignments.bicep' = {
+  params: {
+    storageAccountId: storage.outputs.resourceId
+    principalIds: [
+      logicApp.outputs.systemAssignedPrincipalId
+      identity.outputs.principalId
+    ]
+  }
+}
+
 output logicAppName string = logicApp.outputs.name
 output logicAppHostname string = logicApp.outputs.defaultHostName
 output logicAppResourceId string = logicApp.outputs.resourceId
 output managedIdentityName string = identity.outputs.name
 output managedIdentityClientId string = identity.outputs.clientId
 output managedIdentityPrincipalId string = identity.outputs.principalId
+output logicAppSystemPrincipalId string = logicApp.outputs.systemAssignedPrincipalId
 output storageAccountName string = storage.outputs.name
+output vnetName string = vnet.outputs.name
 output appInsightsName string = enableAppInsights ? (appInsights.?name ?? '') : ''

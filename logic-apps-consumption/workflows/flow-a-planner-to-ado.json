@@ -1,0 +1,142 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "AdoOrg": { "type": "String" },
+    "AdoProject": { "type": "String" },
+    "AdoWorkItemType": { "type": "String" },
+    "PlannerPlanId": { "type": "String" },
+    "ManagedIdentityResourceId": { "type": "String" }
+  },
+  "triggers": {
+    "Recurrence": {
+      "type": "Recurrence",
+      "recurrence": {
+        "frequency": "Minute",
+        "interval": 5,
+        "timeZone": "UTC"
+      }
+    }
+  },
+  "actions": {
+    "Compose_-_Watermark": {
+      "type": "Compose",
+      "runAfter": {},
+      "inputs": "@{formatDateTime(addMinutes(utcNow(), -10), 'yyyy-MM-ddTHH:mm:ssZ')}"
+    },
+    "List_Planner_tasks": {
+      "type": "Http",
+      "runAfter": {
+        "Compose_-_Watermark": [ "Succeeded" ]
+      },
+      "inputs": {
+        "method": "GET",
+        "uri": "@{concat('https://graph.microsoft.com/v1.0/planner/plans/', parameters('PlannerPlanId'), '/tasks')}",
+        "queries": {
+          "$filter": "@{concat('createdDateTime gt ', outputs('Compose_-_Watermark'))}",
+          "$top": "100"
+        },
+        "authentication": {
+          "type": "ManagedServiceIdentity",
+          "identity": "@parameters('ManagedIdentityResourceId')",
+          "audience": "https://graph.microsoft.com"
+        }
+      }
+    },
+    "For_each_task": {
+      "type": "Foreach",
+      "foreach": "@body('List_Planner_tasks')?['value']",
+      "runAfter": {
+        "List_Planner_tasks": [ "Succeeded" ]
+      },
+      "actions": {
+        "Get_task_details": {
+          "type": "Http",
+          "inputs": {
+            "method": "GET",
+            "uri": "@{concat('https://graph.microsoft.com/v1.0/planner/tasks/', items('For_each_task')?['id'], '/details')}",
+            "authentication": {
+              "type": "ManagedServiceIdentity",
+              "identity": "@parameters('ManagedIdentityResourceId')",
+              "audience": "https://graph.microsoft.com"
+            }
+          }
+        },
+        "Condition_-_Not_yet_synced": {
+          "type": "If",
+          "expression": {
+            "and": [
+              {
+                "equals": [
+                  "@contains(coalesce(body('Get_task_details')?['description'], ''), 'ADO_WORK_ITEM_ID:')",
+                  false
+                ]
+              }
+            ]
+          },
+          "runAfter": {
+            "Get_task_details": [ "Succeeded" ]
+          },
+          "actions": {
+            "Create_ADO_work_item": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "@{concat('https://dev.azure.com/', parameters('AdoOrg'), '/', parameters('AdoProject'), '/_apis/wit/workitems/$', parameters('AdoWorkItemType'))}",
+                "queries": {
+                  "api-version": "7.1"
+                },
+                "headers": {
+                  "Content-Type": "application/json-patch+json"
+                },
+                "body": [
+                  {
+                    "op": "add",
+                    "path": "/fields/System.Title",
+                    "value": "@items('For_each_task')?['title']"
+                  },
+                  {
+                    "op": "add",
+                    "path": "/fields/System.Description",
+                    "value": "@{coalesce(body('Get_task_details')?['description'], '')}<br/><br/>---<br/>PLANNER_TASK_ID: @{items('For_each_task')?['id']}"
+                  }
+                ],
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "identity": "@parameters('ManagedIdentityResourceId')",
+                  "audience": "499b84ac-1321-427f-aa17-267ca6975798"
+                }
+              }
+            },
+            "Patch_Planner_task_with_link": {
+              "type": "Http",
+              "runAfter": {
+                "Create_ADO_work_item": [ "Succeeded" ]
+              },
+              "inputs": {
+                "method": "PATCH",
+                "uri": "@{concat('https://graph.microsoft.com/v1.0/planner/tasks/', items('For_each_task')?['id'], '/details')}",
+                "headers": {
+                  "If-Match": "@{body('Get_task_details')?['@odata.etag']}",
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "description": "@{coalesce(body('Get_task_details')?['description'], '')}\n\n---\nLinked Azure DevOps Work Item\nADO_WORK_ITEM_ID: @{body('Create_ADO_work_item')?['id']}\nADO_WORK_ITEM_URL: @{concat('https://dev.azure.com/', parameters('AdoOrg'), '/', parameters('AdoProject'), '/_workitems/edit/', body('Create_ADO_work_item')?['id'])}"
+                },
+                "authentication": {
+                  "type": "ManagedServiceIdentity",
+                  "identity": "@parameters('ManagedIdentityResourceId')",
+                  "audience": "https://graph.microsoft.com"
+                }
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          }
+        }
+      }
+    }
+  },
+  "outputs": {}
+}

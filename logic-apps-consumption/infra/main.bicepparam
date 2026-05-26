@@ -1,8 +1,6 @@
 using './main.bicep'
 
-// Edit the values below before deploying.
-
-param namePrefix = 'planla'
+param namePrefix = 'planlc'
 param location = 'centralus'
 
 param adoOrg = 'tpitest'
@@ -12,10 +10,8 @@ param adoWorkItemType = 'User Story'
 param plannerGroupId = '8edf079f-3f09-4521-9983-17d6d13d494b'
 param plannerPlanId = '8qBH2yq65kybhslSXC3xaWUAEVsZ'
 
-param enableAppInsights = true
-
 param tags = {
-  workload: 'planner-ado-integration'
+  workload: 'planner-ado-integration-consumption'
   managedBy: 'bicep'
-  environment: 'dev'
+  environment: 'demo'
 }

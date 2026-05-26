@@ -61,6 +61,22 @@ if (-not $rg) {
 }
 Write-Host "  Location: $($rg.location)" -ForegroundColor Green
 
+# --- Ensure required resource providers are registered ---
+Write-Host "[3b] Ensuring required resource providers are registered..." -ForegroundColor Yellow
+$rps = @('Microsoft.Web', 'Microsoft.Storage', 'Microsoft.Network', 'Microsoft.ManagedIdentity', 'Microsoft.OperationalInsights', 'Microsoft.Insights')
+foreach ($rp in $rps) {
+    $state = az provider show -n $rp --query registrationState -o tsv 2>$null
+    if ($state -ne 'Registered') {
+        Write-Host "  Registering $rp..." -ForegroundColor Gray
+        az provider register -n $rp -o none
+        do {
+            Start-Sleep -Seconds 5
+            $state = az provider show -n $rp --query registrationState -o tsv 2>$null
+        } while ($state -ne 'Registered')
+    }
+    Write-Host "  $rp : $state" -ForegroundColor Green
+}
+
 # --- Deploy ---
 Write-Host "[4/4] Deploying Bicep template..." -ForegroundColor Yellow
 Write-Host "  Param file: $BicepParamFile" -ForegroundColor Gray
