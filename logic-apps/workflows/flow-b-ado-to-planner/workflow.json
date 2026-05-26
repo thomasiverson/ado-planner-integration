@@ -29,10 +29,14 @@
         "type": "If",
         "expression": {
           "or": [
-            { "equals": [ "@triggerBody()?['resource']?['fields']?['System.State']", "Done" ] },
-            { "equals": [ "@triggerBody()?['resource']?['fields']?['System.State']", "Closed" ] },
-            { "equals": [ "@triggerBody()?['resource']?['fields']?['System.State']", "Completed" ] },
-            { "equals": [ "@triggerBody()?['resource']?['fields']?['System.State']", "Resolved" ] }
+              { "equals": [ "@triggerBody()?['resource']?['revision']?['fields']?['System.State']", "Done" ] },
+              { "equals": [ "@triggerBody()?['resource']?['revision']?['fields']?['System.State']", "Closed" ] },
+              { "equals": [ "@triggerBody()?['resource']?['revision']?['fields']?['System.State']", "Completed" ] },
+              { "equals": [ "@triggerBody()?['resource']?['revision']?['fields']?['System.State']", "Resolved" ] },
+              { "equals": [ "@triggerBody()?['resource']?['fields']?['System.State']?['newValue']", "Done" ] },
+              { "equals": [ "@triggerBody()?['resource']?['fields']?['System.State']?['newValue']", "Closed" ] },
+              { "equals": [ "@triggerBody()?['resource']?['fields']?['System.State']?['newValue']", "Completed" ] },
+              { "equals": [ "@triggerBody()?['resource']?['fields']?['System.State']?['newValue']", "Resolved" ] }
           ]
         },
         "runAfter": {},
@@ -41,7 +45,7 @@
             "type": "Http",
             "inputs": {
               "method": "GET",
-              "uri": "https://dev.azure.com/@{appsetting('ADO_ORG')}/@{appsetting('ADO_PROJECT')}/_apis/wit/workitems/@{triggerBody()?['resource']?['id']}",
+                "uri": "https://dev.azure.com/@{appsetting('ADO_ORG')}/@{appsetting('ADO_PROJECT')}/_apis/wit/workitems/@{triggerBody()?['resource']?['workItemId']}",
               "queries": {
                 "api-version": "7.1",
                 "$expand": "all"
@@ -58,7 +62,7 @@
             "runAfter": {
               "Get_work_item": [ "Succeeded" ]
             },
-            "inputs": "@trim(first(split(last(split(coalesce(body('Get_work_item')?['fields']?['System.Description'], ''), 'PLANNER_TASK_ID:')), ' ')))"
+            "inputs": "@first(split(trim(last(split(coalesce(body('Get_work_item')?['fields']?['System.Description'], ''), 'PLANNER_TASK_ID:'))), ' '))"
           },
           "Condition_-_Marker_present": {
             "type": "If",
@@ -108,26 +112,12 @@
               }
             },
             "else": {
-              "actions": {
-                "Terminate_-_No_marker": {
-                  "type": "Terminate",
-                  "inputs": {
-                    "runStatus": "Succeeded"
-                  }
-                }
-              }
+              "actions": {}
             }
           }
         },
         "else": {
-          "actions": {
-            "Terminate_-_Not_closed": {
-              "type": "Terminate",
-              "inputs": {
-                "runStatus": "Succeeded"
-              }
-            }
-          }
+          "actions": {}
         }
       },
       "Response": {
